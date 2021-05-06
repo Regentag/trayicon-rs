@@ -1,11 +1,36 @@
+use super::bindings::{
+    Windows::Win32::DisplayDevices::POINT,
+    Windows::Win32::Gdi::HBRUSH,
+    Windows::Win32::MenusAndResources::{HCURSOR, HICON, HMENU},
+    Windows::Win32::SystemServices::{GetModuleHandleW, HINSTANCE, LRESULT, PWSTR},
+    Windows::Win32::WindowsAndMessaging,
+    Windows::Win32::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, GetCursorPos, GetWindowLongPtrW, RegisterClassW,
+        RegisterWindowMessageW, SendMessageW, SetForegroundWindow, SetWindowLongPtrW,
+        CREATESTRUCTW, HWND, LPARAM, WINDOW_EX_STYLE, WINDOW_LONG_PTR_INDEX, WINDOW_STYLE,
+        WNDCLASSW, WNDCLASS_STYLES, WPARAM,
+    },
+};
 use std::{
     fmt::Debug,
     ops::{Deref, DerefMut},
 };
-use winapi::shared::minwindef::{HIWORD, LOWORD, LPARAM, LPVOID, LRESULT, UINT, WPARAM};
-use winapi::shared::windef::{HBRUSH, HICON, HMENU, HWND, POINT};
-use winapi::um::libloaderapi::GetModuleHandleW;
-use winapi::um::winuser;
+
+type UINT = u32;
+type DWORD = u32;
+type WORD = u16;
+
+#[inline]
+#[allow(non_snake_case)]
+fn LOWORD(l: DWORD) -> WORD {
+    (l & 0xffff) as WORD
+}
+
+#[inline]
+#[allow(non_snake_case)]
+fn HIWORD(l: DWORD) -> WORD {
+    ((l >> 16) & 0xffff) as WORD
+}
 
 use super::wchar::wchar;
 use super::{msgs, winnotifyicon::WinNotifyIcon, MenuSys};
@@ -28,7 +53,12 @@ where
             // PostMessage doesn't seem to work here, because winit exits before it manages to be processed
 
             // https://devblogs.microsoft.com/oldnewthing/20110926-00/?p=9553
-            winuser::SendMessageW(self.hwnd, winuser::WM_CLOSE, 0, 0);
+            SendMessageW(
+                self.hwnd,
+                WindowsAndMessaging::WM_CLOSE,
+                WPARAM::default(),
+                LPARAM::default(),
+            );
         }
     }
 }
@@ -92,25 +122,25 @@ where
         T: PartialEq + Clone + 'static,
     {
         unsafe {
-            let hinstance = GetModuleHandleW(0 as _);
-            let wnd_class_name = wchar("TrayIconCls");
-            let wnd_class = winuser::WNDCLASSW {
-                style: 0,
+            let hinstance = HINSTANCE(GetModuleHandleW(PWSTR::default()));
+            let mut wnd_class_name = wchar("TrayIconCls");
+            let wnd_class = WNDCLASSW {
+                style: WNDCLASS_STYLES::default(),
                 lpfnWndProc: Some(WinTrayIconImpl::<T>::winproc),
-                hInstance: hinstance,
-                lpszClassName: wnd_class_name.as_ptr() as _,
                 cbClsExtra: 0,
                 cbWndExtra: 0,
-                hIcon: 0 as HICON,
-                hCursor: 0 as HICON,
-                hbrBackground: 0 as HBRUSH,
-                lpszMenuName: 0 as _,
+                hInstance: hinstance,
+                hIcon: HICON::default(),
+                hCursor: HCURSOR::default(),
+                hbrBackground: HBRUSH::default(),
+                lpszMenuName: PWSTR::NULL,
+                lpszClassName: PWSTR(wnd_class_name.as_mut_ptr()),
             };
-            winuser::RegisterClassW(&wnd_class);
+            RegisterClassW(&wnd_class);
 
             // Create window in a memory location that doesn't change
             let window = Box::new(WinTrayIconImpl {
-                hwnd: 0 as HWND,
+                hwnd: HWND::default(),
                 notify_icon,
                 menu,
                 on_click,
@@ -120,22 +150,22 @@ where
                 msg_taskbarcreated: None,
             });
             let ptr = Box::into_raw(window);
-            let hwnd = winuser::CreateWindowExW(
-                0,
-                wnd_class_name.as_ptr() as _,
-                wchar("TrayIcon").as_ptr() as _,
-                0, //winuser::WS_OVERLAPPEDWINDOW | winuser::WS_VISIBLE,
-                winuser::CW_USEDEFAULT,
-                winuser::CW_USEDEFAULT,
-                winuser::CW_USEDEFAULT,
-                winuser::CW_USEDEFAULT,
-                0 as _,
-                0 as HMENU,
+            let hwnd = CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                PWSTR(wnd_class_name.as_mut_ptr()),
+                PWSTR(wchar("TrayIcon").as_mut_ptr()),
+                WINDOW_STYLE::default(), //winuser::WS_OVERLAPPEDWINDOW | winuser::WS_VISIBLE,
+                WindowsAndMessaging::CW_USEDEFAULT,
+                WindowsAndMessaging::CW_USEDEFAULT,
+                WindowsAndMessaging::CW_USEDEFAULT,
+                WindowsAndMessaging::CW_USEDEFAULT,
+                HWND::default(),
+                HMENU::default(),
                 hinstance,
-                ptr as *mut _ as LPVOID,
-            ) as u32;
+                ptr as *mut _,
+            );
 
-            if hwnd == 0 {
+            if hwnd == HWND::default() {
                 return Err(Error::OsError);
             }
 
@@ -145,30 +175,30 @@ where
 
     pub fn wndproc(&mut self, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
         match msg {
-            winuser::WM_CREATE => {
+            WindowsAndMessaging::WM_CREATE => {
                 // Create notification area icon
                 self.notify_icon.add(self.hwnd);
 
                 // Register to listen taskbar creation
                 self.msg_taskbarcreated = unsafe {
-                    Some(winuser::RegisterWindowMessageA(
-                        "TaskbarCreated\0".as_ptr() as _
-                    ))
+                    Some(RegisterWindowMessageW(PWSTR(
+                        wchar("TaskbarCreated\0").as_mut_ptr(),
+                    )))
                 };
             }
 
             // Mouse events on the tray icon
             msgs::WM_USER_TRAYICON => {
-                match lparam as u32 {
+                match lparam.0 as UINT {
                     // Left click tray icon
-                    winuser::WM_LBUTTONUP => {
+                    WindowsAndMessaging::WM_LBUTTONUP => {
                         if let Some(e) = self.on_click.as_ref() {
                             self.sender.send(e);
                         }
                     }
 
                     // Right click tray icon
-                    winuser::WM_RBUTTONUP => {
+                    WindowsAndMessaging::WM_RBUTTONUP => {
                         // Send right click event
                         if let Some(e) = self.on_right_click.as_ref() {
                             self.sender.send(e);
@@ -178,15 +208,15 @@ where
                         if let Some(menu) = &self.menu {
                             let mut pos = POINT { x: 0, y: 0 };
                             unsafe {
-                                winuser::GetCursorPos(&mut pos as _);
-                                winuser::SetForegroundWindow(self.hwnd);
+                                GetCursorPos(&mut pos as _);
+                                SetForegroundWindow(self.hwnd);
                             }
                             menu.menu.track(self.hwnd, pos.x, pos.y);
                         }
                     }
 
                     // Double click tray icon
-                    winuser::WM_LBUTTONDBLCLK => {
+                    WindowsAndMessaging::WM_LBUTTONDBLCLK => {
                         if let Some(e) = self.on_double_click.as_ref() {
                             self.sender.send(e);
                         }
@@ -198,9 +228,9 @@ where
             // Any of the menu commands
             //
             // https://docs.microsoft.com/en-us/windows/win32/menurc/wm-command#parameters
-            winuser::WM_COMMAND => {
-                let identifier = LOWORD(wparam as u32);
-                let cmd = HIWORD(wparam as u32);
+            WindowsAndMessaging::WM_COMMAND => {
+                let identifier = LOWORD(wparam.0 as u32);
+                let cmd = HIWORD(wparam.0 as u32);
 
                 // Menu command
                 if cmd == 0 {
@@ -219,46 +249,53 @@ where
 
             // Default
             _ => {
-                return unsafe { winuser::DefWindowProcW(self.hwnd, msg, wparam, lparam) };
+                return unsafe { DefWindowProcW(self.hwnd, msg, wparam, lparam) };
             }
         }
-        0
+        LRESULT(0)
     }
 
     // This serves as a conduit for actual winproc in the subproc
-    pub unsafe extern "system" fn winproc(
+    pub extern "system" fn winproc(
         hwnd: HWND,
         msg: UINT,
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
-        match msg {
-            winuser::WM_CREATE => {
-                let create_struct: &mut winuser::CREATESTRUCTW = &mut *(lparam as *mut _);
-                // Arc::from_raw(ptr)
-                let window: &mut WinTrayIconImpl<T> =
-                    &mut *(create_struct.lpCreateParams as *mut _);
-                window.hwnd = hwnd;
-                winuser::SetWindowLongPtrW(hwnd, winuser::GWL_USERDATA, window as *mut _ as _);
-                window.wndproc(msg, wparam, lparam)
-            }
-            winuser::WM_NCDESTROY => {
-                let window_ptr = winuser::SetWindowLongPtrW(hwnd, winuser::GWL_USERDATA, 0);
-                if window_ptr != 0 {
-                    let ptr = window_ptr as *mut WinTrayIconImpl<T>;
-                    let mut window = Box::from_raw(ptr);
+        unsafe {
+            match msg {
+                WindowsAndMessaging::WM_CREATE => {
+                    let create_struct: &mut CREATESTRUCTW = &mut *(lparam.0 as *mut _);
+                    // Arc::from_raw(ptr)
+                    let window: &mut WinTrayIconImpl<T> =
+                        &mut *(create_struct.lpCreateParams as *mut _);
+                    window.hwnd = hwnd;
+                    SetWindowLongPtrW(
+                        hwnd,
+                        WINDOW_LONG_PTR_INDEX::GWL_USERDATA,
+                        window as *mut _ as _,
+                    );
                     window.wndproc(msg, wparam, lparam)
-                } else {
-                    winuser::DefWindowProcW(hwnd, msg, wparam, lparam)
                 }
-            }
-            _ => {
-                let window_ptr = winuser::GetWindowLongPtrW(hwnd, winuser::GWL_USERDATA);
-                if window_ptr != 0 {
-                    let window: &mut WinTrayIconImpl<T> = &mut *(window_ptr as *mut _);
-                    window.wndproc(msg, wparam, lparam)
-                } else {
-                    winuser::DefWindowProcW(hwnd, msg, wparam, lparam)
+                WindowsAndMessaging::WM_NCDESTROY => {
+                    let window_ptr =
+                        SetWindowLongPtrW(hwnd, WINDOW_LONG_PTR_INDEX::GWL_USERDATA, 0);
+                    if window_ptr != 0 {
+                        let ptr = window_ptr as *mut WinTrayIconImpl<T>;
+                        let mut window = Box::from_raw(ptr);
+                        window.wndproc(msg, wparam, lparam)
+                    } else {
+                        DefWindowProcW(hwnd, msg, wparam, lparam)
+                    }
+                }
+                _ => {
+                    let window_ptr = GetWindowLongPtrW(hwnd, WINDOW_LONG_PTR_INDEX::GWL_USERDATA);
+                    if window_ptr != 0 {
+                        let window: &mut WinTrayIconImpl<T> = &mut *(window_ptr as *mut _);
+                        window.wndproc(msg, wparam, lparam)
+                    } else {
+                        DefWindowProcW(hwnd, msg, wparam, lparam)
+                    }
                 }
             }
         }

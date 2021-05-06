@@ -1,0 +1,13 @@
+[package]
+name = "trayicon-win32-example"
+version = "0.0.1"
+authors = ["Regentag"]
+edition = "2018"
+publish = false
+
+[dependencies]
+windows = "0.9.1"
+trayicon = { path = "../../" }
+
+[build-dependencies]
+windows = "0.9.1"

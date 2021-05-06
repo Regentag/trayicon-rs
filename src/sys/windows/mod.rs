@@ -4,6 +4,10 @@ mod winhmenu;
 mod winnotifyicon;
 mod wintrayicon;
 
+mod bindings {
+    windows::include_bindings!();
+}
+
 use std::collections::HashMap;
 use wintrayicon::WinTrayIconImpl;
 
